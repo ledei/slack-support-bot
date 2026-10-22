@@ -1,4 +1,5 @@
 import re
+from difflib import SequenceMatcher
 
 import chromadb
 import httpx
@@ -136,6 +137,23 @@ async def answer(question: str, history: list | None = None) -> dict:
     return {**result, "answer": f"{SWEDISH_NOTE}\n\n{result['answer']}"}
 
 
+def repeats(draft: str, history: list | None) -> bool:
+    """Nearly the same as an earlier answer in the thread ("is there more?" once got the first answer again)."""
+    flat = lambda s: re.sub(r"[^a-z0-9]+", " ", s.lower()).strip()  # noqa: E731
+    d = flat(draft)
+
+    def already_said(earlier: str) -> float:  # share of the draft that the earlier answer already contains
+        return sum(b.size for b in SequenceMatcher(None, d, flat(earlier), autojunk=False).get_matching_blocks()) / max(len(d), 1)
+
+    return any(already_said(a) >= 0.8 for _, a in history or [])
+
+
+def quoted_before(chunk: str, history: list | None) -> bool:
+    """Whether an earlier answer in the thread already quoted a sentence from this chunk."""
+    norm = lambda s: re.sub(r"\s+", " ", re.sub(r"[`*_]", "", s)).lower()  # noqa: E731
+    return any(norm(q) in norm(chunk) for _, a in history or [] for q in re.findall(r'"([^"\n]{25,})"', a))
+
+
 async def answer_english(question: str, history: list | None = None) -> dict:
     """history = earlier (question, answer) pairs in the same Slack thread, oldest first."""
     # A follow-up like "are you sure?" means nothing alone; search and judge it together with the earlier questions.
@@ -146,7 +164,13 @@ async def answer_english(question: str, history: list | None = None) -> dict:
     context = "\n\n---\n\n".join(c["text"] for c in chunks)
     draft = await generate(question, context, history=history)
     ok, reason = await jev.check_answer(topic, context, draft)
-    if not ok:  # one rewrite with Jev's reason; Jev checks it again
+    if ok and repeats(draft, history):
+        # Not unsafe, so only worth a rewrite: if that repeats again but passes Jev, it is still sent.
+        ok, reason = False, "it repeats an earlier answer in this thread; give details from the docs not said yet"
+    if not ok:  # one rewrite with the reason; Jev checks it again
+        # In a thread, leave out the chunks it already quoted, or the writer copies the same sentence again.
+        if fresh := [c for c in chunks if not quoted_before(c["text"], history)]:
+            chunks, context = fresh, "\n\n---\n\n".join(c["text"] for c in fresh)
         draft = await generate(question, context, feedback=(draft, reason), history=history)
         ok, reason = await jev.check_answer(topic, context, draft)
     if not ok:
