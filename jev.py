@@ -43,15 +43,27 @@ def check_tone(answer: str) -> str | None:
     return None
 
 
-URL_OR_PHONE = re.compile(r"https?://\S+|www\.\S+|\+?\d[\d\s().-]{6,}\d")
+LINK = re.compile(r"(?:https?://)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:/[^\s)]*)?", re.I)  # bare domains too
+PHONE = re.compile(r"\+?\d[\d\s().-]{6,}\d")
+# Tags and "supported:" in any case or spacing; the uppercase labels only, so "your answer" stays fine.
+STEERING = re.compile(r"[{}]|(?i:<\s*/?\s*(?:context|answer)\b)|\bCONTEXT\b|\bANSWER\b|(?i:\"?supported\"?\s*:)")
+
+
+def links(text: str) -> set[str]:
+    return {re.sub(r"^(?:https?://)?(?:www\.)?", "", m.lower()).rstrip("/.,") for m in LINK.findall(text)}
+
+
+def phones(text: str) -> set[str]:
+    return {re.sub(r"\D", "", m) for m in PHONE.findall(text)}
 
 
 def check_injection_and_facts(context: str, answer: str) -> str | None:
     """Checks a prompt can't talk its way past. Returns the problem, or None."""
     # JSON, our tags or the checker's labels in a draft can only be an attempt to steer the checker.
-    if re.search(r"[{}]|</?(context|answer)>|\bCONTEXT\b|\bANSWER\b|\"?supported\"?\s*:", answer):
+    if STEERING.search(answer):
         return "looks like it is trying to steer the checker"
-    if made_up := [m for m in URL_OR_PHONE.findall(answer) if m.rstrip(".,)") not in context]:
+    # Exact match, not substring: help.example.co must not pass because help.example.com is in the docs.
+    if made_up := sorted((links(answer) - links(context)) | (phones(answer) - phones(context))):
         return f"link or number not in the docs: {', '.join(made_up)}"
     return None
 
@@ -60,7 +72,9 @@ async def check_answer(question: str, context: str, answer: str) -> tuple[bool, 
     """Code checks first, then ask the Jev model one thing: is every fact in the context? Fails closed."""
     if problem := check_tone(answer) or check_injection_and_facts(context, answer):
         return False, problem
-    prompt = JEV_PROMPT.format(context=context, answer=answer)
+    # Escaped, so no spelling of a closing tag inside the text can end the data block.
+    esc = lambda s: s.replace("<", "&lt;").replace(">", "&gt;")  # noqa: E731
+    prompt = JEV_PROMPT.format(context=esc(context), answer=esc(answer))
     try:
         async with httpx.AsyncClient(timeout=120) as client:
             r = await client.post(
