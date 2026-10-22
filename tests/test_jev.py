@@ -154,3 +154,11 @@ def test_quotes_must_be_word_for_word():
     assert not q("Start does close this enrollment window", ctx)  # negation dropped
     assert not q("Only newly eligible memberships receive a pending ContestUser until the contest stop time", ctx)
     assert not q("...  ---", ctx)  # no words
+
+
+def test_code_names_must_be_in_the_docs():
+    # Regression: a goal-history answer named `InvoiceJob`, copied from a prompt example.
+    ctx = "Completions are stored in `DailyGoalCompletions` rows. GET /api/goal/history returns them."
+    ok = jev.check_injection_and_facts
+    assert ok(ctx, "Rows live in `DailyGoalCompletions`; call `GET /api/goal/history`.") is None
+    assert "InvoiceJob" in ok(ctx, "They feed `InvoiceJob` on the 1st of each month.")

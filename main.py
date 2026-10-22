@@ -1,6 +1,5 @@
 import logging
 import re
-from collections import OrderedDict
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -19,17 +18,29 @@ def slack_escape(text: str) -> str:
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-# shortcut: thread memory lives in this process, so a restart forgets it; use Slack's conversations.replies
-# (needs the groups:history scope) if follow-ups across restarts matter.
-THREADS: OrderedDict[str, list[tuple[str, str]]] = OrderedDict()
+MENTION = re.compile(r"<@[A-Z0-9]+>")
 
 
-def remember(thread: str, question: str, answer: str, max_threads: int = 500, max_turns: int = 4) -> None:
-    """Keep the last few (question, answer) pairs per Slack thread, and only the most recent threads."""
-    turns = THREADS.pop(thread, [])
-    THREADS[thread] = (turns + [(question, answer)])[-max_turns:]
-    while len(THREADS) > max_threads:
-        THREADS.popitem(last=False)
+def from_slack(text: str) -> str:
+    """Slack text back to plain text: drop mentions, undo the &lt; &gt; &amp; escaping."""
+    text = MENTION.sub("", text)
+    return text.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&").strip()
+
+
+def thread_history(messages: list[dict], bot_user: str, current_ts: str, max_turns: int = 4) -> tuple[list, bool]:
+    """From a Slack thread (oldest first), the (question, bot answer) pairs before current_ts, and whether
+    the bot spoke last. Human chatter the bot never answered is left out."""
+    earlier = [m for m in messages if m.get("ts") != current_ts and float(m.get("ts", 0)) < float(current_ts)]
+    history, question = [], None
+    for m in earlier:
+        if m.get("user") == bot_user or m.get("bot_id"):
+            if question is not None:
+                history.append((question, from_slack(m.get("text", ""))))
+                question = None
+        else:
+            question = from_slack(m.get("text", ""))
+    bot_last = bool(earlier) and (earlier[-1].get("user") == bot_user or bool(earlier[-1].get("bot_id")))
+    return history[-max_turns:], bot_last
 
 
 def to_slack(text: str) -> str:
@@ -47,20 +58,31 @@ async def lifespan(_: FastAPI):
 
     slack = AsyncApp(token=settings.SLACK_BOT_TOKEN)
 
-    async def reply(event, say):
+    bot_user = (await slack.client.auth_test())["user_id"]
+
+    async def read_thread(event) -> tuple[list, bool]:
+        """The conversation so far, read from Slack each time, so it survives restarts."""
+        if not event.get("thread_ts"):
+            return [], False
+        try:
+            r = await slack.client.conversations_replies(channel=event["channel"], ts=event["thread_ts"], limit=50)
+        except Exception as e:  # e.g. missing groups:history scope: answer without the thread
+            log.warning("could not read thread: %s", getattr(e, "response", {}).get("error", type(e).__name__))
+            return [], False
+        return thread_history(r["messages"], bot_user, event["ts"])
+
+    async def reply(event, say, history: list):
         thread = event.get("thread_ts") or event["ts"]
-        question = re.sub(r"<@[A-Z0-9]+>", "", event.get("text", "")).strip()
+        question = from_slack(event.get("text", ""))
         if not question:
             await say(text="Hi! What can I help you with today?", thread_ts=thread)
             return
-        key = f"{event.get('channel')}:{thread}"
         try:
-            result = await rag.answer(question, history=THREADS.get(key, []))
+            result = await rag.answer(question, history=history)
             answer = result["answer"]
-            remember(key, question, answer)
             # Status only: questions, and Jev's model-written reason, may hold personal details.
-            log.info("slack %s answered: jev=%s sources=%s", event["type"], result["jev"].split(":", 1)[0],
-                     [s.rsplit("/", 1)[-1] for s in result["sources"]])
+            log.info("slack %s answered: jev=%s sources=%s turns=%d", event["type"], result["jev"].split(":", 1)[0],
+                     [s.rsplit("/", 1)[-1] for s in result["sources"]], len(history))
         except Exception:  # e.g. Ollama down: never leave the person without a reply
             log.exception("answering failed")
             answer = ERROR_REPLY
@@ -68,16 +90,22 @@ async def lifespan(_: FastAPI):
 
     @slack.event("app_mention")
     async def on_mention(event, say):
-        await reply(event, say)
+        history, _ = await read_thread(event)
+        await reply(event, say, history)
 
     @slack.event("message")
-    async def on_dm(event, say):
-        # Only direct messages from people; channel messages need an @mention.
-        if event.get("channel_type") == "im" and not event.get("bot_id") and not event.get("subtype"):
-            await reply(event, say)
-        else:
-            log.info("slack message ignored: channel_type=%s subtype=%s bot=%s",
-                     event.get("channel_type"), event.get("subtype"), bool(event.get("bot_id")))
+    async def on_message(event, say):
+        if event.get("bot_id") or event.get("subtype") or f"<@{bot_user}>" in event.get("text", ""):
+            return  # bots, edits and joins; @mentions are handled by on_mention
+        if event.get("channel_type") == "im":
+            history, _ = await read_thread(event)
+            await reply(event, say, history)
+            return
+        # In a channel, answer a follow-up without @mention only when the bot spoke last in that thread,
+        # so it doesn't jump into every reply of a busy thread.
+        history, bot_last = await read_thread(event)
+        if bot_last:
+            await reply(event, say, history)
 
     # Socket Mode: the bot connects out to Slack, so no public URL or open port is needed.
     handler = AsyncSocketModeHandler(slack, settings.SLACK_APP_TOKEN)

@@ -16,11 +16,17 @@ oauth_config:
       - app_mentions:read
       - chat:write
       - im:history
+      # Read the thread so follow-ups keep the conversation, also after a restart.
+      - channels:history
+      - groups:history
 settings:
   event_subscriptions:
     bot_events:
       - app_mention
       - message.im
+      # Follow-ups in the bot's threads without an @mention.
+      - message.channels
+      - message.groups
   socket_mode_enabled: true
   org_deploy_enabled: false
   token_rotation_enabled: false

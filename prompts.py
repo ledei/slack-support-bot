@@ -69,6 +69,16 @@ FALLBACK = (
     "so I don't want to guess. A teammate will pick this up and reply here."
 )
 
+FALLBACK_SV = (
+    "Tack för frågan! Jag hittade inget tydligt svar i våra dokument, så jag vill inte gissa. "
+    "En kollega tar över och svarar här."
+)
+
+SWEDISH_NOTE = "_Svar på engelska: dokumenten är på engelska, och det är den engelska texten som har kontrollerats._"
+
+TRANSLATE_PROMPT = """Translate the text to {language}. Keep everything inside `backticks` and "double quotes" exactly
+as it is, and keep numbers, links, names and code unchanged. Reply with only the translation."""
+
 ERROR_REPLY = (
     "Thanks for your message! I'm having a technical hiccup and can't answer right now. "
     "A teammate will pick this up and reply here."
