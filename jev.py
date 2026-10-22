@@ -72,6 +72,13 @@ def check_injection_and_facts(context: str, answer: str) -> str | None:
     labels = (p.strip() for b in re.findall(nav, answer, flags=re.I) for p in re.split(r"\s*(?:>|→|,|/)\s*", b))
     if invented := [p for p in labels if p and p.lower() not in context.lower()]:
         return f"names menus or buttons not in the docs: {', '.join(invented)}"
+    # A "quoted" sentence presents itself as the docs' own words, so it must really be in the docs.
+    norm = lambda s: re.sub(r"\s+", " ", re.sub(r"[`*_]", "", s)).strip().lower()  # noqa: E731
+    if fake := [q for q in re.findall(r'"([^"\n]{25,})"', answer) if norm(q).rstrip(".") not in norm(context)]:
+        return f"quotes text that is not in the docs: {fake[0][:60]}"
+    # A yes/no verdict is where the writer's own assumptions slip in, so it must rest on a quote from the docs.
+    if re.match(r"\s*(yes|no)\b", answer, re.I) and not re.search(r'"[^"\n]{25,}"', answer):
+        return "a yes/no answer must quote the sentence from the docs that decides it"
     # Exact match, not substring: help.example.co must not pass because help.example.com is in the docs.
     if made_up := sorted((links(answer) - links(context)) | (phones(answer) - phones(context))):
         return f"link or number not in the docs: {', '.join(made_up)}"

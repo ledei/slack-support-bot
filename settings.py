@@ -42,7 +42,9 @@ MAX_WORDS = int(os.getenv("MAX_WORDS", "200"))
 MIN_RELEVANCE = float(os.getenv("MIN_RELEVANCE", "0.3"))
 
 CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma")
-TOP_K = int(os.getenv("TOP_K", "4"))
+# 8, then trimmed by MAX_DISTANCE and DISTANCE_MARGIN: with 417 docs the deciding ADR for "can users join
+# after start?" ranked 5th and was never read at 4.
+TOP_K = int(os.getenv("TOP_K", "8"))
 # Chroma cosine distance (all-MiniLM). With 91 docs: right doc 0.32-0.71, "CEO salary" 0.77.
 MAX_DISTANCE = float(os.getenv("MAX_DISTANCE", "0.75"))
 # Also drop chunks more than this behind the best match (loosely related docs were +0.22 to +0.50).
