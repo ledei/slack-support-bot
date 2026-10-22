@@ -1,4 +1,4 @@
-from rag import near_best
+from rag import clean_draft, near_best
 
 
 def test_keeps_only_chunks_close_to_the_best_match():
@@ -13,3 +13,10 @@ def test_keeps_only_chunks_close_to_the_best_match():
 def test_nothing_close_enough_means_nothing():
     assert near_best([("stats", 0.77), ("pan", 0.80)], max_distance=0.75, margin=0.12) == []
     assert near_best([], max_distance=0.75, margin=0.12) == []
+
+
+def test_clean_draft_drops_copied_labels_and_rewrite_openers():
+    assert clean_draft("Answer: Use `make api`.") == "Use `make api`."
+    assert clean_draft("Sure, here’s the revised answer:\n\n1. Run `make db-up`.") == "1. Run `make db-up`."
+    assert clean_draft("Here's a revised version: Done.") == "Done."
+    assert clean_draft("The answer is in `goal-history.md`.") == "The answer is in `goal-history.md`."

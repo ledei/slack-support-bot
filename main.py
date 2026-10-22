@@ -1,5 +1,6 @@
 import logging
 import re
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -16,6 +17,19 @@ log = logging.getLogger("bot")
 def slack_escape(text: str) -> str:
     """Stop model output from becoming <!channel> pings, <@user> mentions or disguised <url|links>."""
     return text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+
+
+# shortcut: thread memory lives in this process, so a restart forgets it; use Slack's conversations.replies
+# (needs the groups:history scope) if follow-ups across restarts matter.
+THREADS: OrderedDict[str, list[tuple[str, str]]] = OrderedDict()
+
+
+def remember(thread: str, question: str, answer: str, max_threads: int = 500, max_turns: int = 4) -> None:
+    """Keep the last few (question, answer) pairs per Slack thread, and only the most recent threads."""
+    turns = THREADS.pop(thread, [])
+    THREADS[thread] = (turns + [(question, answer)])[-max_turns:]
+    while len(THREADS) > max_threads:
+        THREADS.popitem(last=False)
 
 
 def to_slack(text: str) -> str:
@@ -39,9 +53,11 @@ async def lifespan(_: FastAPI):
         if not question:
             await say(text="Hi! What can I help you with today?", thread_ts=thread)
             return
+        key = f"{event.get('channel')}:{thread}"
         try:
-            result = await rag.answer(question)
+            result = await rag.answer(question, history=THREADS.get(key, []))
             answer = result["answer"]
+            remember(key, question, answer)
             # Status only: questions, and Jev's model-written reason, may hold personal details.
             log.info("slack %s answered: jev=%s sources=%s", event["type"], result["jev"].split(":", 1)[0],
                      [s.rsplit("/", 1)[-1] for s in result["sources"]])

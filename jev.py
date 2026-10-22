@@ -5,6 +5,7 @@ import re
 from pathlib import Path
 
 import httpx
+import numpy as np
 
 import settings
 from prompts import JEV_PROMPT
@@ -61,10 +62,14 @@ def phones(text: str) -> set[str]:
 def check_injection_and_facts(context: str, answer: str) -> str | None:
     """Checks a prompt can't talk its way past. Returns the problem, or None."""
     # JSON, our tags or the checker's labels in a draft can only be an attempt to steer the checker.
-    if STEERING.search(answer):
+    # Braces are normal inside code (`/api/goal/{goalId}`), so only text outside backticks counts for them.
+    prose = re.sub(r"```.*?```|`[^`\n]*`", "", answer, flags=re.S)
+    if re.search(r"[{}]", prose) or STEERING.search(answer.replace("{", "").replace("}", "")):
         return "looks like it is trying to steer the checker"
-    # Bold is how the writer names menus and buttons; each one must exist in the docs (no invented "Settings").
-    labels = (p.strip() for b in re.findall(r"\*\*(.+?)\*\*", answer) for p in re.split(r"\s*(?:>|→|,|/)\s*", b))
+    # A bold name right after "go to", "tap", "click"… is a menu or button; it must exist in the docs
+    # (no invented "Settings"). Bold used for emphasis or headings is fine.
+    nav = r"(?:go to|open|tap|click|select|choose|press)\s+(?:on\s+|the\s+)?\*\*(.+?)\*\*"
+    labels = (p.strip() for b in re.findall(nav, answer, flags=re.I) for p in re.split(r"\s*(?:>|→|,|/)\s*", b))
     if invented := [p for p in labels if p and p.lower() not in context.lower()]:
         return f"names menus or buttons not in the docs: {', '.join(invented)}"
     # Exact match, not substring: help.example.co must not pass because help.example.com is in the docs.
@@ -73,10 +78,26 @@ def check_injection_and_facts(context: str, answer: str) -> str | None:
     return None
 
 
+_embed = None
+
+
+def relevance(question: str, answer: str) -> float:
+    """Cosine similarity of question and answer, with the embedding model search already uses (local, no LLM)."""
+    global _embed
+    if _embed is None:
+        from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
+        _embed = DefaultEmbeddingFunction()
+    q, a = (np.asarray(v) for v in _embed([question, answer]))
+    return float(q @ a / (np.linalg.norm(q) * np.linalg.norm(a)))
+
+
 async def check_answer(question: str, context: str, answer: str) -> tuple[bool, str]:
     """Code checks first, then ask the Jev model one thing: is every fact in the context? Fails closed."""
     if problem := check_tone(answer) or check_injection_and_facts(context, answer):
         return False, problem
+    # Grounded is not enough: "are you sure?" once got a well-sourced answer about unrelated PRs.
+    if (score := relevance(question, answer)) < settings.MIN_RELEVANCE:
+        return False, f"doesn't answer the question (relevance {score:.2f})"
     # Escaped, so no spelling of a closing tag inside the text can end the data block.
     esc = lambda s: s.replace("<", "&lt;").replace(">", "&gt;")  # noqa: E731
     prompt = JEV_PROMPT.format(context=esc(context), answer=esc(answer))

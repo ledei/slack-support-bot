@@ -32,13 +32,14 @@ OLLAMA_URL = os.getenv("OLLAMA_URL", "http://localhost:11434")
 LLM_MODEL = os.getenv("LLM_MODEL", "qwen2.5:3b")
 JEV_MODEL = os.getenv("JEV_MODEL", "qwen2.5:1.5b")
 
-# Jev blocks answers containing any of these (case-insensitive). Add your product's internal terms.
+# Jev blocks answers containing any of these (case-insensitive). Engineering readers, so technical words are fine;
+# these catch blame and the writer leaking prompt words.
 BLOCKED_WORDS = [w.strip().lower() for w in os.getenv(
-    "BLOCKED_WORDS",
-    "invalid,incorrect,obviously,your fault,token,oauth,backfill,webhook,http 4,http 5,re-authori,integration,[provider],"
-    "revised version,the context",
+    "BLOCKED_WORDS", "obviously,your fault,revised answer,revised version,the context",
 ).split(",") if w.strip()]
-MAX_WORDS = int(os.getenv("MAX_WORDS", "100"))
+MAX_WORDS = int(os.getenv("MAX_WORDS", "200"))
+# Minimum question-answer similarity (same embedding model as search). Slack test: good 0.34-0.77, off-topic <= 0.24.
+MIN_RELEVANCE = float(os.getenv("MIN_RELEVANCE", "0.3"))
 
 CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma")
 TOP_K = int(os.getenv("TOP_K", "4"))
