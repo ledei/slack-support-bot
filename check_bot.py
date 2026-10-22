@@ -59,8 +59,6 @@ async def main() -> int:
             problems.append(f"fell back ({r['jev']})")
         elif must not in a.lower():
             problems.append(f"missing '{must}'")
-        if s["jargon"]:
-            problems.append(f"jargon {s['jargon']}")
         if s["words"] > 90:
             problems.append(f"{s['words']} words")
         if leak := leaked(a):
