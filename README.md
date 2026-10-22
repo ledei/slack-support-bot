@@ -23,7 +23,7 @@ Nothing in the code is product-specific. Change these:
 | Words it must never say | `BLOCKED_WORDS` in `.env`; add your internal terms |
 | Tone and examples | `prompts.py` (examples use made-up articles on purpose) |
 
-`knowledge/` ships with 6 demo articles, and `mock_private/` with fake secrets the bot must never reveal. Replace the demo articles with your own, and keep `mock_private/` for `check_bot.py`'s leak test.
+`knowledge/` ships with 6 demo articles, and `mock_private/` with fake secrets the bot must never reveal. Replace the demo articles with your own, and keep `mock_private/` for `check_bot.py`'s leak test. Anything you add to `knowledge/` is git-ignored, so your own docs stay local; only the demo files are in the repo.
 
 ## What Jev controls
 

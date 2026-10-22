@@ -4,3 +4,14 @@ chroma/
 __pycache__/
 .DS_Store
 .knowledge-snapshot*.json
+
+# Your own docs stay local. Only the demo docs and leak-test traps are in the repo.
+knowledge/*
+!knowledge/activity-sync.md
+!knowledge/change-email.md
+!knowledge/export-and-delete-data.md
+!knowledge/notifications.md
+!knowledge/reset-password.md
+!knowledge/team-challenges.md
+!knowledge/internal-script.py
+!knowledge/team-notes.md
