@@ -31,15 +31,17 @@ def thread_history(messages: list[dict], bot_user: str, current_ts: str, max_tur
     """From a Slack thread (oldest first), the (question, bot answer) pairs before current_ts, and whether
     the bot spoke last. Human chatter the bot never answered is left out."""
     earlier = [m for m in messages if m.get("ts") != current_ts and float(m.get("ts", 0)) < float(current_ts)]
+    # Other bots and integrations are neither our answers nor questions: they must not speak for this bot.
+    earlier = [m for m in earlier if m.get("user") == bot_user or not m.get("bot_id")]
     history, question = [], None
     for m in earlier:
-        if m.get("user") == bot_user or m.get("bot_id"):
+        if m.get("user") == bot_user:
             if question is not None:
                 history.append((question, from_slack(m.get("text", ""))))
                 question = None
         else:
             question = from_slack(m.get("text", ""))
-    bot_last = bool(earlier) and (earlier[-1].get("user") == bot_user or bool(earlier[-1].get("bot_id")))
+    bot_last = bool(earlier) and earlier[-1].get("user") == bot_user
     return history[-max_turns:], bot_last
 
 
