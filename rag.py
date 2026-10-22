@@ -1,3 +1,5 @@
+import re
+
 import chromadb
 import httpx
 
@@ -54,14 +56,21 @@ def ingest() -> int:
     return count
 
 
+def near_best(hits: list[tuple], max_distance: float, margin: float) -> list:
+    """hits = (item, distance), closest first. Keep items close enough overall AND close to the best match,
+    so loosely related docs don't crowd in when the knowledge base is large."""
+    if not hits or hits[0][1] > max_distance:
+        return []
+    return [item for item, dist in hits if dist <= max_distance and dist - hits[0][1] <= margin]
+
+
 def retrieve(question: str) -> list[dict]:
     res = collection().query(query_texts=[question], n_results=settings.TOP_K)
-    chunks = [
-        {"text": doc, "source": meta["source"]}
+    hits = [
+        ({"text": doc, "source": meta["source"]}, dist)
         for doc, meta, dist in zip(res["documents"][0], res["metadatas"][0], res["distances"][0])
-        if dist <= settings.MAX_DISTANCE
     ]
-    return jev.filter_chunks(chunks)
+    return jev.filter_chunks(near_best(hits, settings.MAX_DISTANCE, settings.DISTANCE_MARGIN))
 
 
 async def generate(question: str, context: str, feedback: tuple[str, str] | None = None) -> str:
@@ -71,9 +80,11 @@ async def generate(question: str, context: str, feedback: tuple[str, str] | None
         {"role": "user", "content": f"Help articles:\n{context}\n\nQuestion: {question}"},
     ]
     if feedback:
+        # The checker says "CONTEXT"; the writer only knows "help articles" and would echo the word.
+        reason = re.sub(r"\bcontext\b", "help articles", feedback[1], flags=re.I)
         messages += [
             {"role": "assistant", "content": feedback[0]},
-            {"role": "user", "content": f"A checker rejected that answer: {feedback[1]}. Rewrite it so it fixes this and follows the rules. Reply with only the new answer."},
+            {"role": "user", "content": f"A checker rejected that answer: {reason}. Rewrite it so it fixes this and follows the rules. Reply with only the new answer."},
         ]
     async with httpx.AsyncClient(timeout=120) as client:
         r = await client.post(
