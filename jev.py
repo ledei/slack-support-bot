@@ -1,6 +1,7 @@
 """Jev: the controller. Decides what the bot may read and whether an answer may be sent."""
 
 import json
+import re
 from pathlib import Path
 
 import httpx
@@ -42,9 +43,22 @@ def check_tone(answer: str) -> str | None:
     return None
 
 
+URL_OR_PHONE = re.compile(r"https?://\S+|www\.\S+|\+?\d[\d\s().-]{6,}\d")
+
+
+def check_injection_and_facts(context: str, answer: str) -> str | None:
+    """Checks a prompt can't talk its way past. Returns the problem, or None."""
+    # JSON, our tags or the checker's labels in a draft can only be an attempt to steer the checker.
+    if re.search(r"[{}]|</?(context|answer)>|\bCONTEXT\b|\bANSWER\b|\"?supported\"?\s*:", answer):
+        return "looks like it is trying to steer the checker"
+    if made_up := [m for m in URL_OR_PHONE.findall(answer) if m.rstrip(".,)") not in context]:
+        return f"link or number not in the docs: {', '.join(made_up)}"
+    return None
+
+
 async def check_answer(question: str, context: str, answer: str) -> tuple[bool, str]:
-    """Rule checks first, then ask the Jev model one thing: is every fact in the context? Fails closed."""
-    if problem := check_tone(answer):
+    """Code checks first, then ask the Jev model one thing: is every fact in the context? Fails closed."""
+    if problem := check_tone(answer) or check_injection_and_facts(context, answer):
         return False, problem
     prompt = JEV_PROMPT.format(context=context, answer=answer)
     try:
