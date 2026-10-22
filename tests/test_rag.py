@@ -1,4 +1,4 @@
-from rag import clean_draft, is_swedish, near_best
+from rag import clean_draft, is_swedish, near_best, quoted_before, repeats
 
 
 def test_keeps_only_chunks_close_to_the_best_match():
@@ -28,3 +28,20 @@ def test_is_swedish():
     assert is_swedish("snackar du dansk")
     assert not is_swedish("can users join after the start date?")
     assert not is_swedish("how does the goal history work")
+
+
+def test_repeats_spots_an_earlier_answer_again():
+    # From Slack: "is there any more i should know off?" got the first answer back.
+    first = 'Can people join a company challenge after its start date? Yes, according to the docs, "Yes, until the challenge stops. The start date does not close enrollment."'
+    history = [("can users join after the start date?", first)]
+    assert repeats('Yes, according to the docs, "Yes, until the challenge stops. The start date does not close enrollment."', history)
+    assert not repeats("Also: offers launched before late registration existed keep it switched off.", history)
+    assert not repeats(first, [])
+
+
+def test_quoted_before_finds_chunks_the_thread_already_used():
+    faq = "Can people join a company challenge after its start date?\n\nYes, until the challenge stops. The start date does not close enrollment."
+    adr = "Newly eligible memberships receive a pending `ContestUser` until the contest stop time."
+    history = [("can users join?", 'Yes, according to the docs, "Yes, until the challenge stops. The start date does not close enrollment."')]
+    assert quoted_before(faq, history)
+    assert not quoted_before(adr, history)
