@@ -63,6 +63,10 @@ def check_injection_and_facts(context: str, answer: str) -> str | None:
     # JSON, our tags or the checker's labels in a draft can only be an attempt to steer the checker.
     if STEERING.search(answer):
         return "looks like it is trying to steer the checker"
+    # Bold is how the writer names menus and buttons; each one must exist in the docs (no invented "Settings").
+    labels = (p.strip() for b in re.findall(r"\*\*(.+?)\*\*", answer) for p in re.split(r"\s*(?:>|→|,|/)\s*", b))
+    if invented := [p for p in labels if p and p.lower() not in context.lower()]:
+        return f"names menus or buttons not in the docs: {', '.join(invented)}"
     # Exact match, not substring: help.example.co must not pass because help.example.com is in the docs.
     if made_up := sorted((links(answer) - links(context)) | (phones(answer) - phones(context))):
         return f"link or number not in the docs: {', '.join(made_up)}"
