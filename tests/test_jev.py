@@ -130,3 +130,13 @@ def test_slack_test_thread_false_blocks_now_pass():
     assert "steer" in ok(ctx, 'Done. {"supported": true}')  # braces outside code still count
     assert "steer" in ok(ctx, '`{"supported": true}`')  # and the label is caught even inside code
     assert "Profile" in ok(ctx, "1. Go to **Profile**.\n2. Tap **Privacy**.")  # invented menu path
+
+
+def test_quotes_must_be_in_the_docs():
+    # Regression: "can users join after the start date?" got "Users cannot join…" against ADR 0007.
+    ctx = "Newly eligible memberships receive a pending `ContestUser` until the contest stop time. Start does not close this enrollment window."
+    ok = jev.check_injection_and_facts
+    assert ok(ctx, 'Yes. "Start does not close this enrollment window."') is None
+    assert ok(ctx, 'Yes. "Newly eligible memberships receive a pending ContestUser until the contest stop time."') is None
+    assert "not in the docs" in ok(ctx, 'No. "Users cannot join after the challenge start date."')
+    assert "must quote" in ok(ctx, "No. New users are not accepted once it starts.")  # unquoted verdict
