@@ -1,6 +1,8 @@
 services:
   bot:
     build: .
+    # Comes back by itself after a crash or a Docker/Mac restart; `docker compose stop` keeps it stopped.
+    restart: unless-stopped
     ports:
       - "127.0.0.1:8000:8000"
     env_file:

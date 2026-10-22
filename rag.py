@@ -73,15 +73,16 @@ def retrieve(question: str) -> list[dict]:
     return jev.filter_chunks(near_best(hits, settings.MAX_DISTANCE, settings.DISTANCE_MARGIN))
 
 
-async def generate(question: str, context: str, feedback: tuple[str, str] | None = None) -> str:
-    """feedback = (previous draft, why Jev blocked it), to ask for one rewrite."""
-    messages = [
-        {"role": "system", "content": SYSTEM_PROMPT},
-        {"role": "user", "content": f"Help articles:\n{context}\n\nQuestion: {question}"},
-    ]
+async def generate(question: str, context: str, feedback: tuple[str, str] | None = None, history: list | None = None) -> str:
+    """feedback = (previous draft, why Jev blocked it), to ask for one rewrite.
+    history = earlier (question, answer) pairs in the same Slack thread, oldest first."""
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+    for q, a in history or []:
+        messages += [{"role": "user", "content": q}, {"role": "assistant", "content": a}]
+    messages.append({"role": "user", "content": f"Docs:\n{context}\n\nQuestion: {question}"})
     if feedback:
-        # The checker says "CONTEXT"; the writer only knows "help articles" and would echo the word.
-        reason = re.sub(r"\bcontext\b", "help articles", feedback[1], flags=re.I)
+        # The checker says "CONTEXT"; the writer only knows "docs" and would echo the word.
+        reason = re.sub(r"\bcontext\b", "docs", feedback[1], flags=re.I)
         messages += [
             {"role": "assistant", "content": feedback[0]},
             {"role": "user", "content": f"A checker rejected that answer: {reason}. Rewrite it so it fixes this and follows the rules. Reply with only the new answer."},
@@ -92,20 +93,28 @@ async def generate(question: str, context: str, feedback: tuple[str, str] | None
             json={"model": settings.LLM_MODEL, "stream": False, "options": {"temperature": 0.2}, "messages": messages},
         )
         r.raise_for_status()
-    # The few-shot examples end in "Answer: ...", and the model sometimes copies the label.
-    return r.json()["message"]["content"].strip().removeprefix("Answer:").strip()
+    return clean_draft(r.json()["message"]["content"])
 
 
-async def answer(question: str) -> dict:
-    chunks = retrieve(question)
+def clean_draft(text: str) -> str:
+    """Drop an "Answer:" label copied from the examples, or a "Sure, here's the revised answer:" opener."""
+    opener = r"^\s*(?:answer:|(?:sure|okay|ok)?[,!.]?\s*here(?:'|’)?s (?:the|a|my) revised (?:answer|version)[^\n]*:)\s*"
+    return re.sub(opener, "", text.strip(), flags=re.I).strip()
+
+
+async def answer(question: str, history: list | None = None) -> dict:
+    """history = earlier (question, answer) pairs in the same Slack thread, oldest first."""
+    # A follow-up like "are you sure?" means nothing alone; search and judge it together with the earlier questions.
+    topic = " ".join([q for q, _ in (history or [])[-2:]] + [question])
+    chunks = retrieve(topic)
     if not chunks:
         return {"answer": FALLBACK, "sources": [], "jev": "no allowed docs matched"}
     context = "\n\n---\n\n".join(c["text"] for c in chunks)
-    draft = await generate(question, context)
-    ok, reason = await jev.check_answer(question, context, draft)
+    draft = await generate(question, context, history=history)
+    ok, reason = await jev.check_answer(topic, context, draft)
     if not ok:  # one rewrite with Jev's reason; Jev checks it again
-        draft = await generate(question, context, feedback=(draft, reason))
-        ok, reason = await jev.check_answer(question, context, draft)
+        draft = await generate(question, context, feedback=(draft, reason), history=history)
+        ok, reason = await jev.check_answer(topic, context, draft)
     if not ok:
         return {"answer": FALLBACK, "sources": [], "jev": f"blocked: {reason}", "blocked_draft": draft}
     return {"answer": draft, "sources": sorted({c["source"] for c in chunks}), "jev": f"passed: {reason}"}
