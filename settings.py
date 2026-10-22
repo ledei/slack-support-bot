@@ -42,8 +42,10 @@ MAX_WORDS = int(os.getenv("MAX_WORDS", "100"))
 
 CHROMA_PATH = os.getenv("CHROMA_PATH", "./chroma")
 TOP_K = int(os.getenv("TOP_K", "4"))
-# Chroma cosine distance (all-MiniLM). Tested: related ~0.45-0.75, unrelated ~0.9+.
-MAX_DISTANCE = float(os.getenv("MAX_DISTANCE", "0.8"))
+# Chroma cosine distance (all-MiniLM). With 91 docs: right doc 0.32-0.71, "CEO salary" 0.77.
+MAX_DISTANCE = float(os.getenv("MAX_DISTANCE", "0.75"))
+# Also drop chunks more than this behind the best match (loosely related docs were +0.22 to +0.50).
+DISTANCE_MARGIN = float(os.getenv("DISTANCE_MARGIN", "0.12"))
 
 SLACK_BOT_TOKEN = os.getenv("SLACK_BOT_TOKEN")
 SLACK_APP_TOKEN = os.getenv("SLACK_APP_TOKEN")  # xapp-..., for Socket Mode
