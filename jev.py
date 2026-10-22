@@ -59,6 +59,29 @@ def phones(text: str) -> set[str]:
     return {re.sub(r"\D", "", m) for m in PHONE.findall(text)}
 
 
+NEGATIONS = {"not", "no", "never", "cannot", "can't", "don't", "doesn't", "isn't", "won't", "without", "none"}
+
+
+def _norm(s: str) -> str:
+    return re.sub(r"\s+", " ", re.sub(r"[`*_]", "", s)).strip().lower()
+
+
+def quote_in_docs(quote: str, context: str) -> bool:
+    """Word for word, or a close paraphrase of two neighbouring doc sentences. Models rarely quote exactly
+    ("Start does not close the enrollment window for newly eligible memberships"), but a quote must never
+    add a negation the docs don't have ("Users cannot join...")."""
+    q, ctx = _norm(quote).rstrip("."), _norm(context)
+    if q in ctx:
+        return True
+    words = set(re.findall(r"[a-z0-9']+", q))
+    sentences = re.split(r"(?<=[.!?])\s+", ctx)
+    for first, second in zip(sentences, sentences[1:] + [""]):
+        window = set(re.findall(r"[a-z0-9']+", f"{first} {second}"))
+        if words & NEGATIONS <= window and len(words & window) >= 0.8 * len(words):
+            return True
+    return False
+
+
 def check_injection_and_facts(context: str, answer: str) -> str | None:
     """Checks a prompt can't talk its way past. Returns the problem, or None."""
     # JSON, our tags or the checker's labels in a draft can only be an attempt to steer the checker.
@@ -72,9 +95,8 @@ def check_injection_and_facts(context: str, answer: str) -> str | None:
     labels = (p.strip() for b in re.findall(nav, answer, flags=re.I) for p in re.split(r"\s*(?:>|→|,|/)\s*", b))
     if invented := [p for p in labels if p and p.lower() not in context.lower()]:
         return f"names menus or buttons not in the docs: {', '.join(invented)}"
-    # A "quoted" sentence presents itself as the docs' own words, so it must really be in the docs.
-    norm = lambda s: re.sub(r"\s+", " ", re.sub(r"[`*_]", "", s)).strip().lower()  # noqa: E731
-    if fake := [q for q in re.findall(r'"([^"\n]{25,})"', answer) if norm(q).rstrip(".") not in norm(context)]:
+    # A "quoted" sentence presents itself as the docs' own words, so it must really come from the docs.
+    if fake := [q for q in re.findall(r'"([^"\n]{25,})"', answer) if not quote_in_docs(q, context)]:
         return f"quotes text that is not in the docs: {fake[0][:60]}"
     # A yes/no verdict is where the writer's own assumptions slip in, so it must rest on a quote from the docs.
     if re.match(r"\s*(yes|no)\b", answer, re.I) and not re.search(r'"[^"\n]{25,}"', answer):

@@ -139,4 +139,8 @@ def test_quotes_must_be_in_the_docs():
     assert ok(ctx, 'Yes. "Start does not close this enrollment window."') is None
     assert ok(ctx, 'Yes. "Newly eligible memberships receive a pending ContestUser until the contest stop time."') is None
     assert "not in the docs" in ok(ctx, 'No. "Users cannot join after the challenge start date."')
+    # Real paraphrase from qwen 3b and 7b: two neighbouring sentences merged, no new negation.
+    assert ok(ctx, 'Yes. "Start does not close the enrollment window for newly eligible memberships."') is None
+    # Same words, but a negation the docs don't have.
+    assert "not in the docs" in ok(ctx, 'No. "Newly eligible memberships never receive a pending ContestUser."')
     assert "must quote" in ok(ctx, "No. New users are not accepted once it starts.")  # unquoted verdict
