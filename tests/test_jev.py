@@ -144,3 +144,16 @@ def test_quotes_must_be_in_the_docs():
     # Same words, but a negation the docs don't have.
     assert "not in the docs" in ok(ctx, 'No. "Newly eligible memberships never receive a pending ContestUser."')
     assert "must quote" in ok(ctx, "No. New users are not accepted once it starts.")  # unquoted verdict
+
+
+def test_paraphrased_quotes_cannot_change_the_meaning():
+    # Security review: dropped negations, added qualifiers, curly apostrophes, empty quotes.
+    ctx = "Newly eligible memberships receive a pending `ContestUser` until the contest stop time. Start does not close this enrollment window."
+    q = jev.quote_in_docs
+    assert q("Start does not close the enrollment window for newly eligible memberships", ctx)  # real paraphrase
+    assert not q("Start does close the enrollment window for newly eligible memberships", ctx)  # negation dropped
+    assert q("Start doesn’t close the enrollment window for newly eligible memberships", ctx)  # curly n't = "not"
+    assert not q("Newly eligible memberships don’t receive a pending ContestUser until the stop time", ctx)  # curly n't added
+    assert not q("Only newly eligible memberships receive a pending ContestUser until the contest stop time", ctx)  # qualifier added
+    assert not q("Newly eligible memberships never receive a pending ContestUser until the stop time", ctx)  # negation added
+    assert not q("...  ---", ctx)  # no words

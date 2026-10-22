@@ -59,25 +59,45 @@ def phones(text: str) -> set[str]:
     return {re.sub(r"\D", "", m) for m in PHONE.findall(text)}
 
 
-NEGATIONS = {"not", "no", "never", "cannot", "can't", "don't", "doesn't", "isn't", "won't", "without", "none"}
+NEGATIONS = {"not", "no", "never", "cannot", "without", "none", "nor", "neither", "nothing", "nobody", "nowhere", "unable"}
+# Words that change what a sentence claims; a paraphrase may not bring them in.
+QUALIFIERS = {"only", "always", "except", "all", "every", "any", "must", "unless"}
 
 
 def _norm(s: str) -> str:
+    s = re.sub(r"[’‘ʼ`´]", "'", s)  # curly apostrophes would hide "doesn’t" from the negation check
     return re.sub(r"\s+", " ", re.sub(r"[`*_]", "", s)).strip().lower()
 
 
+def _tokens(s: str) -> list[str]:
+    """Words, with "doesn't", "cannot" and "not" as the same negation word."""
+    return ["not" if w.endswith("n't") or w == "cannot" else w for w in re.findall(r"[a-z0-9']+", s)]
+
+
+def _negated(tokens: list[str]) -> set[tuple[str, str]]:
+    """Each negation with the word it negates: "does not close" -> ("not", "close")."""
+    return {(w, nxt) for w, nxt in zip(tokens, tokens[1:] + [""]) if w in NEGATIONS or w == "not"}
+
+
 def quote_in_docs(quote: str, context: str) -> bool:
-    """Word for word, or a close paraphrase of two neighbouring doc sentences. Models rarely quote exactly
-    ("Start does not close the enrollment window for newly eligible memberships"), but a quote must never
-    add a negation the docs don't have ("Users cannot join...")."""
+    """Word for word, or a close paraphrase of one or two neighbouring doc sentences. Models rarely quote
+    exactly ("Start does not close the enrollment window for newly eligible memberships"), so a paraphrase
+    passes when >= 80% of its words come from the docs, it brings in no qualifier like "only", and every
+    negation sits on the same word as in the docs: none added, dropped or moved."""
     q, ctx = _norm(quote).rstrip("."), _norm(context)
+    if not re.search(r"[a-z0-9]", q):
+        return False
     if q in ctx:
         return True
-    words = set(re.findall(r"[a-z0-9']+", q))
+    words = _tokens(q)
     sentences = re.split(r"(?<=[.!?])\s+", ctx)
-    for first, second in zip(sentences, sentences[1:] + [""]):
-        window = set(re.findall(r"[a-z0-9']+", f"{first} {second}"))
-        if words & NEGATIONS <= window and len(words & window) >= 0.8 * len(words):
+    windows = sentences + [f"{a} {b}" for a, b in zip(sentences, sentences[1:])]
+    for window in windows:
+        doc_words = _tokens(window)
+        extra = set(words) - set(doc_words)
+        doc_negated_here = {(n, w) for n, w in _negated(doc_words) if w in words}  # doc negations of words the quote uses
+        if (_negated(words) <= _negated(doc_words) and doc_negated_here <= _negated(words)
+                and not extra & QUALIFIERS and len(set(words) - extra) >= 0.8 * len(set(words))):
             return True
     return False
 
