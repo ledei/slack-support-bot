@@ -98,3 +98,13 @@ def test_review_bypasses_are_blocked():
     assert ok(ctx, "Visit www.help.example.com/reset/ for help.") is None  # same link, other spelling
     assert "12345678" in ok(ctx, "Call 123 456 78.")  # part of a real number is not the number
     assert ok(ctx, "Call (+46) 8-123 456 78.") is None  # same number, other format
+
+
+def test_links_with_any_scheme_ip_or_non_latin_host_are_blocked():
+    ctx = "Visit https://help.example.com/reset."
+    ok = jev.check_injection_and_facts
+    assert "192.168.1.1/login" in ok(ctx, "Log in at https://192.168.1.1/login.")
+    assert "localhost:8080" in ok(ctx, "Open http://localhost:8080 to reset.")
+    assert "files.example.net" in ok(ctx, "Get it from ftp://files.example.net.")
+    assert "еxample.com" in ok(ctx, "Reset at еxample.com/reset.")  # Cyrillic е
+    assert ok(ctx, "Visit HTTPS://Help.Example.com/reset.") is None

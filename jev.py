@@ -43,14 +43,15 @@ def check_tone(answer: str) -> str | None:
     return None
 
 
-LINK = re.compile(r"(?:https?://)?(?:[a-z0-9-]+\.)+[a-z]{2,}(?:/[^\s)]*)?", re.I)  # bare domains too
+# Any scheme://… (fails closed: IPs, localhost, any host) or a bare domain, non-Latin included.
+LINK = re.compile(r"\b[a-z][a-z0-9+.-]*://[^\s)>\]]+|(?:www\.)[^\s)>\]]+|(?:[\w-]+\.)+[^\W\d_]{2,}(?:/[^\s)>\]]*)?", re.I)
 PHONE = re.compile(r"\+?\d[\d\s().-]{6,}\d")
 # Tags and "supported:" in any case or spacing; the uppercase labels only, so "your answer" stays fine.
 STEERING = re.compile(r"[{}]|(?i:<\s*/?\s*(?:context|answer)\b)|\bCONTEXT\b|\bANSWER\b|(?i:\"?supported\"?\s*:)")
 
 
 def links(text: str) -> set[str]:
-    return {re.sub(r"^(?:https?://)?(?:www\.)?", "", m.lower()).rstrip("/.,") for m in LINK.findall(text)}
+    return {re.sub(r"^(?:[a-z][a-z0-9+.-]*://)?(?:www\.)?", "", m.lower()).rstrip("/.,") for m in LINK.findall(text)}
 
 
 def phones(text: str) -> set[str]:
