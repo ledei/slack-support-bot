@@ -5,7 +5,7 @@ A local Slack support bot that answers only from your own help docs, in plain, p
 ```
 Slack ⇄ Socket Mode ─▶ Chroma (search docs) ─▶ Jev: drop anything not in settings.json
                                             ─▶ Qwen 2.5 3b writes the answer
-                                            ─▶ Jev (Qwen 2.5 1.5B): backed by the docs and polite?
+                                            ─▶ Jev (Qwen 2.5 7B): backed by the docs, polite, and does a Yes/No match its quote?
                                                  yes ─▶ reply in thread
                                                  no  ─▶ polite "a teammate will help"
 ```
@@ -19,7 +19,7 @@ Nothing in the code is product-specific. Change these:
 | What it knows | Your `.md`/`.txt` files in `knowledge/` (any folder depth), or other paths listed in `settings.json` |
 | Which Slack workspace | `SLACK_BOT_TOKEN` and `SLACK_APP_TOKEN` in `.env` (see Connect Slack) |
 | Bot name | `slack-manifest.yaml` |
-| Models | `LLM_MODEL` (writer) and `JEV_MODEL` (checker) in `.env` |
+| Models | `LLM_MODEL` (writer), `JEV_MODEL` (checker) and `VERDICT_MODEL` (does a quote say yes or no) in `.env` |
 | Words it must never say | `BLOCKED_WORDS` in `.env`; add your internal terms |
 | Tone and examples | `prompts.py` (examples use made-up articles on purpose) |
 
@@ -49,7 +49,7 @@ A single file opens only that file, not its folder. If the file is missing or br
 ## Run it
 
 1. Edit `settings.json`: list the folders and single files the bot may read (paths relative to the file). Then `cp .env.example .env`.
-2. `ollama pull qwen2.5:3b && ollama pull qwen2.5:1.5b` (writer and Jev).
+2. `ollama pull qwen2.5:3b && ollama pull qwen2.5:7b` (writer, and Jev with its yes/no check). Without the 7b, every answer falls back.
 3. `uv sync`
 4. `uv run python rag.py` — builds the index. Rerun after docs change.
 5. `uv run uvicorn main:api --port 8000`
@@ -82,7 +82,7 @@ Ollama stays on the host by default (a Mac's GPU isn't reachable from Docker). P
 2. Try it: same `curl` as above, on `localhost:8000`.
 3. Docs changed? `docker compose restart bot`
 
-On a server without Ollama: `DOCKER_OLLAMA_URL=http://ollama:11434 docker compose --profile ollama up -d`, then `docker compose exec ollama ollama pull qwen2.5:3b` and the same for `qwen2.5:1.5b`.
+On a server without Ollama: `DOCKER_OLLAMA_URL=http://ollama:11434 docker compose --profile ollama up -d`, then `docker compose exec ollama ollama pull qwen2.5:3b` and the same for `qwen2.5:7b`.
 
 ## Connect Slack
 

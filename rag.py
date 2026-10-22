@@ -88,10 +88,11 @@ async def generate(question: str, context: str, feedback: tuple[str, str] | None
             {"role": "assistant", "content": feedback[0]},
             {"role": "user", "content": f"A checker rejected that answer: {reason}. Rewrite it so it fixes this and follows the rules. Reply with only the new answer."},
         ]
+    # Same question, same answer: at 0.2 one run sent a wrong "Yes" and the next, in Slack, the fallback.
     async with httpx.AsyncClient(timeout=120) as client:
         r = await client.post(
             f"{settings.OLLAMA_URL}/api/chat",
-            json={"model": settings.LLM_MODEL, "stream": False, "options": {"temperature": 0.2}, "messages": messages},
+            json={"model": settings.LLM_MODEL, "stream": False, "options": {"temperature": 0, "seed": 0}, "messages": messages},
         )
         r.raise_for_status()
     return clean_draft(r.json()["message"]["content"])
@@ -162,16 +163,22 @@ async def answer_english(question: str, history: list | None = None) -> dict:
     if not chunks:
         return {"answer": FALLBACK, "sources": [], "jev": "no allowed docs matched"}
     context = "\n\n---\n\n".join(c["text"] for c in chunks)
-    draft = await generate(question, context, history=history)
+    draft = jev.repair_quotes(await generate(question, context, history=history), context)
     ok, reason = await jev.check_answer(topic, context, draft)
     if ok and repeats(draft, history):
         # Not unsafe, so only worth a rewrite: if that repeats again but passes Jev, it is still sent.
         ok, reason = False, "it repeats an earlier answer in this thread; give details from the docs not said yet"
     if not ok:  # one rewrite with the reason; Jev checks it again
+        # The 3B writer rarely finds the deciding sentence itself (it quoted a definition for "do they get a new
+        # team?"), so a failed Yes/No gets that sentence handed to it. The rewrite is still checked in full.
+        if reason.startswith(("the quoted sentence does not say", "a yes/no answer must quote")):
+            if found := await jev.deciding_sentence(topic, context):
+                sentence, verdict = found
+                reason += f'. The docs sentence that decides it says {verdict.capitalize()}: "{sentence}". Start with {verdict.capitalize()}. and quote that sentence word for word'
         # In a thread, leave out the chunks it already quoted, or the writer copies the same sentence again.
         if fresh := [c for c in chunks if not quoted_before(c["text"], history)]:
             chunks, context = fresh, "\n\n---\n\n".join(c["text"] for c in fresh)
-        draft = await generate(question, context, feedback=(draft, reason), history=history)
+        draft = jev.repair_quotes(await generate(question, context, feedback=(draft, reason), history=history), context)
         ok, reason = await jev.check_answer(topic, context, draft)
     if not ok:
         return {"answer": FALLBACK, "sources": [], "jev": f"blocked: {reason}", "blocked_draft": draft}

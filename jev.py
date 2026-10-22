@@ -2,13 +2,14 @@
 
 import json
 import re
+from difflib import SequenceMatcher
 from pathlib import Path
 
 import httpx
 import numpy as np
 
 import settings
-from prompts import JEV_PROMPT
+from prompts import JEV_PROMPT, VERDICT_PROMPT
 
 
 def is_allowed(path: str | Path) -> bool:
@@ -104,14 +105,85 @@ def check_injection_and_facts(context: str, answer: str) -> str | None:
 _embed = None
 
 
-def relevance(question: str, answer: str) -> float:
-    """Cosine similarity of question and answer, with the embedding model search already uses (local, no LLM)."""
+def _similarities(question: str, texts: list[str]) -> list[float]:
+    """Cosine similarity of the question to each text, with the embedding model search already uses (local, no LLM)."""
     global _embed
     if _embed is None:
         from chromadb.utils.embedding_functions import DefaultEmbeddingFunction
         _embed = DefaultEmbeddingFunction()
-    q, a = (np.asarray(v) for v in _embed([question, answer]))
-    return float(q @ a / (np.linalg.norm(q) * np.linalg.norm(a)))
+    q, *rest = (np.asarray(v) for v in _embed([question, *texts]))
+    return [float(q @ t / (np.linalg.norm(q) * np.linalg.norm(t))) for t in rest]
+
+
+def relevance(question: str, answer: str) -> float:
+    return _similarities(question, [answer])[0]
+
+
+def sentences(context: str) -> list[str]:
+    """The context's sentences, without list markers or bold, so a quote of one reads as plain text."""
+    lines = (re.sub(r"^\s*(?:[-*]|\d+\.)\s+", "", line).replace("**", "") for line in context.splitlines())
+    return [s.strip() for line in lines for s in re.split(r"(?<=[.!?])\s+", line) if len(s.strip()) >= 25]
+
+
+def repair_quotes(answer: str, context: str, min_ratio: float = 0.85) -> str:
+    """The 3B writer often quotes a sentence almost word for word ("they scoring" for "its scoring"). Swap such a
+    quote for the real sentence, or the real two sentences, so the reader sees the docs' words. Anything less
+    close stays as it is and check_injection_and_facts still blocks it."""
+    sents = sentences(context)
+    candidates = sents + [f"{a} {b}" for a, b in zip(sents, sents[1:])]
+
+    def fix(m: re.Match) -> str:
+        quote = m.group(1)
+        if quote_in_docs(quote, context):
+            return m.group(0)
+        q = _norm(quote)
+        best = max(candidates, key=lambda c: SequenceMatcher(None, q, _norm(c), autojunk=False).ratio(), default=None)
+        if best and SequenceMatcher(None, q, _norm(best), autojunk=False).ratio() >= min_ratio:
+            return f'"{best}"'
+        return m.group(0)
+
+    return re.sub(r'"([^"\n]{25,})"', fix, answer)
+
+
+async def deciding_sentence(question: str, context: str, top: int = 5) -> tuple[str, str] | None:
+    """For a rewrite after a failed Yes/No check: the sentence in the context closest to the question that says
+    yes or no on its own, and which. None when none of the closest few does."""
+    sents = sentences(context)
+    ranked = sorted(zip(_similarities(question, sents), sents), reverse=True)[:top] if sents else []
+    for _, s in ranked:
+        verdict = await _ask_json(settings.VERDICT_MODEL, VERDICT_PROMPT.format(question=_esc(question), quote=_esc(s)))
+        if (v := str(verdict.get("verdict", "")).lower()) in ("yes", "no"):
+            return s, v
+    return None
+
+
+# Escaped, so no spelling of a closing tag inside the text can end the data block.
+_esc = lambda s: s.replace("<", "&lt;").replace(">", "&gt;")  # noqa: E731
+
+
+async def _ask_json(model: str, prompt: str) -> dict:
+    async with httpx.AsyncClient(timeout=120) as client:
+        r = await client.post(
+            f"{settings.OLLAMA_URL}/api/generate",
+            json={"model": model, "prompt": prompt, "format": "json", "stream": False, "options": {"temperature": 0, "seed": 0}},
+        )
+        r.raise_for_status()
+    return json.loads(r.json()["response"])
+
+
+async def check_verdict(question: str, answer: str) -> str | None:
+    """A Yes/No answer must quote a sentence that itself says that Yes or No. Returns the problem, or None.
+    check_injection_and_facts already made sure a word-for-word quote is there."""
+    if not (m := re.match(r"\s*(yes|no)\b", answer, re.I)):
+        return None
+    said = m.group(1).lower()
+    quotes = re.findall(r'"([^"\n]{25,})"', answer)
+    for q in quotes:
+        verdict = await _ask_json(settings.VERDICT_MODEL, VERDICT_PROMPT.format(question=_esc(question), quote=_esc(q)))
+        if str(verdict.get("verdict", "")).lower() == said:
+            return None
+    return (f'the quoted sentence does not say "{said.capitalize()}"; quote the sentence that decides it, or say the '
+            "docs don't say. If the question is not a yes/no question, do not start with Yes or No")
 
 
 async def check_answer(question: str, context: str, answer: str) -> tuple[bool, str]:
@@ -121,17 +193,13 @@ async def check_answer(question: str, context: str, answer: str) -> tuple[bool, 
     # Grounded is not enough: "are you sure?" once got a well-sourced answer about unrelated PRs.
     if (score := relevance(question, answer)) < settings.MIN_RELEVANCE:
         return False, f"doesn't answer the question (relevance {score:.2f})"
-    # Escaped, so no spelling of a closing tag inside the text can end the data block.
-    esc = lambda s: s.replace("<", "&lt;").replace(">", "&gt;")  # noqa: E731
-    prompt = JEV_PROMPT.format(context=esc(context), answer=esc(answer))
     try:
-        async with httpx.AsyncClient(timeout=120) as client:
-            r = await client.post(
-                f"{settings.OLLAMA_URL}/api/generate",
-                json={"model": settings.JEV_MODEL, "prompt": prompt, "format": "json", "stream": False, "options": {"temperature": 0}},
-            )
-            r.raise_for_status()
-        verdict = json.loads(r.json()["response"])
-        return verdict.get("supported") is True, str(verdict.get("why", ""))
+        if problem := await check_verdict(question, answer):
+            return False, problem
+        verdict = await _ask_json(settings.JEV_MODEL, JEV_PROMPT.format(context=_esc(context), answer=_esc(answer)))
+        claims = [c for c in verdict.get("claims", []) if isinstance(c, dict)]
+        if unstated := [str(c.get("claim", "")) for c in claims if c.get("stated") is not True]:
+            return False, f"not in the docs: {'; '.join(unstated[:2])}"
+        return verdict.get("supported") is True, "every claim is in the docs"
     except (httpx.HTTPError, ValueError, KeyError, AttributeError) as e:
         return False, f"jev error: {e}"

@@ -1,3 +1,4 @@
+import asyncio
 import json
 
 import pytest
@@ -162,3 +163,33 @@ def test_code_names_must_be_in_the_docs():
     ok = jev.check_injection_and_facts
     assert ok(ctx, "Rows live in `DailyGoalCompletions`; call `GET /api/goal/history`.") is None
     assert "InvoiceJob" in ok(ctx, "They feed `InvoiceJob` on the 1st of each month.")
+
+
+def test_yes_no_must_match_what_its_quote_says(monkeypatch):
+    # From the Slack test: "Yes" plus a real but unrelated quote passed; the runbook says it does not create a hold.
+    said = {"It does not create a legal hold, preserve an immutable copy.": "no",
+            "Invalid configuration stops startup rather than allowing cleanup.": "unclear"}
+
+    async def fake(model, prompt):
+        return {"verdict": next(v for q, v in said.items() if q in prompt)}
+
+    monkeypatch.setattr(jev, "_ask_json", fake)
+    check = lambda a: asyncio.run(jev.check_verdict("Is the pause a legal hold?", a))  # noqa: E731
+    assert check('No. "It does not create a legal hold, preserve an immutable copy."') is None
+    assert "Yes" in check('Yes. "It does not create a legal hold, preserve an immutable copy."')
+    assert "No" in check('No. "Invalid configuration stops startup rather than allowing cleanup."')
+    assert check("The pause stops eight jobs.") is None  # not a yes/no answer: nothing to ask
+
+
+def test_near_miss_quotes_become_the_real_sentence():
+    # From the thread test: "they scoring" for "its scoring", and a quote spanning two sentences.
+    ctx = ("- And it **applies only to drawn Random contests**. That gate is load-bearing rather than tidy.\n"
+           "Clamping those would deflate their totals against a limit its scoring has never respected.")
+    fix = jev.repair_quotes
+    assert fix('No. "And it applies only to drawn Random contests. That gate is load-bearing rather than tidy."', ctx) == \
+        'No. "And it applies only to drawn Random contests. That gate is load-bearing rather than tidy."'
+    assert "its scoring" in fix('"Clamping those would deflate their totals against a limit they scoring has never respected."', ctx)
+    # Not close enough: left alone, so the quote check still blocks it.
+    made_up = '"This global pause does create a legal hold for every customer."'
+    assert fix(made_up, ctx) == made_up
+    assert "not in the docs" in jev.check_injection_and_facts(ctx, made_up)
