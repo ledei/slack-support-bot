@@ -94,6 +94,8 @@ Uses Socket Mode: the bot connects out to Slack, so no public URL, ngrok or open
 4. Restart the bot (`docker compose up -d` or uvicorn). `/health` shows `"slack": true` and the log says `Connected to Slack (Socket Mode)`.
 5. In Slack: DM **Support Bot**, or `/invite @Support Bot` to a channel and @mention it. It replies in a thread.
 
+**Thread chat.** The bot reads the whole Slack thread each time, so follow-ups keep the conversation, also after a restart. In a channel it answers a follow-up without an @mention only when it was the last to speak in that thread; otherwise mention it. This needs the `channels:history` and `groups:history` scopes and the `message.channels` and `message.groups` events from `slack-manifest.yaml`. If you created the app from an older manifest: **App Manifest** → paste the new one → **Save**, then **Install App** → **Reinstall to Workspace**.
+
 ## Tone
 
 The writing rules live in `prompts.py`. They come from `docs/research/plain-language-support.md`.

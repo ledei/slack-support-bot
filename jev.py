@@ -85,6 +85,10 @@ def check_injection_and_facts(context: str, answer: str) -> str | None:
     labels = (p.strip() for b in re.findall(nav, answer, flags=re.I) for p in re.split(r"\s*(?:>|→|,|/)\s*", b))
     if invented := [p for p in labels if p and p.lower() not in context.lower()]:
         return f"names menus or buttons not in the docs: {', '.join(invented)}"
+    # A `code` name (class, file, endpoint, command) must be in the docs: `InvoiceJob` once leaked in from a
+    # prompt example. Compared without case, spacing or formatting.
+    if invented := [c for c in re.findall(r"`([^`\n]+)`", answer) if _norm(c) not in _norm(context)]:
+        return f"names code that is not in the docs: {', '.join(invented[:3])}"
     # A "quoted" sentence presents itself as the docs' own words, so it must really come from the docs.
     if fake := [q for q in re.findall(r'"([^"\n]{25,})"', answer) if not quote_in_docs(q, context)]:
         return f"quotes text that is not in the docs: {fake[0][:60]}"

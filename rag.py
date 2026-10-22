@@ -5,7 +5,7 @@ import httpx
 
 import jev
 import settings
-from prompts import FALLBACK, SYSTEM_PROMPT
+from prompts import FALLBACK, FALLBACK_SV, SWEDISH_NOTE, SYSTEM_PROMPT, TRANSLATE_PROMPT
 
 _collection = None
 
@@ -102,7 +102,41 @@ def clean_draft(text: str) -> str:
     return re.sub(opener, "", text.strip(), flags=re.I).strip()
 
 
+SWEDISH_WORDS = {"och", "att", "det", "som", "är", "inte", "för", "med", "hur", "vad", "kan", "jag", "vi", "du",
+                 "när", "varför", "eller", "också", "ska", "går", "finns", "har", "efter", "innan", "måste", "fungerar"}
+
+
+def is_swedish(text: str) -> bool:
+    words = re.findall(r"[a-zåäö]+", text.lower())
+    hits = len(SWEDISH_WORDS.intersection(words))
+    return bool(re.search(r"[åäö]", text.lower())) or hits >= 2 or (hits == 1 and len(words) <= 4)
+
+
+async def translate(text: str, language: str) -> str:
+    async with httpx.AsyncClient(timeout=120) as client:
+        r = await client.post(
+            f"{settings.OLLAMA_URL}/api/chat",
+            json={"model": settings.LLM_MODEL, "stream": False, "options": {"temperature": 0},
+                  "messages": [{"role": "system", "content": TRANSLATE_PROMPT.format(language=language)},
+                               {"role": "user", "content": text}]},
+        )
+        r.raise_for_status()
+    return r.json()["message"]["content"].strip()
+
+
 async def answer(question: str, history: list | None = None) -> dict:
+    """Swedish questions are translated to English for search and Jev (the docs, the search model and the
+    checks are English). The answer stays in the English that Jev checked: translating it back with the 3B
+    model changed meanings ("does not close enrollment" became "does not open the invitation")."""
+    if not is_swedish(question):
+        return await answer_english(question, history)
+    result = await answer_english(await translate(question, "English"), history)
+    if result["answer"] == FALLBACK:
+        return {**result, "answer": FALLBACK_SV}
+    return {**result, "answer": f"{SWEDISH_NOTE}\n\n{result['answer']}"}
+
+
+async def answer_english(question: str, history: list | None = None) -> dict:
     """history = earlier (question, answer) pairs in the same Slack thread, oldest first."""
     # A follow-up like "are you sure?" means nothing alone; search and judge it together with the earlier questions.
     topic = " ".join([q for q, _ in (history or [])[-2:]] + [question])

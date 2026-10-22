@@ -1,5 +1,5 @@
 import main
-from main import remember, slack_escape, to_slack
+from main import slack_escape, to_slack
 
 
 def test_slack_escape_neutralises_pings_mentions_and_links():
@@ -12,11 +12,17 @@ def test_to_slack_converts_bold_after_escaping():
     assert to_slack("1. Tap **Privacy** > **Export**") == "1. Tap *Privacy* &gt; *Export*"
 
 
-def test_remember_keeps_recent_turns_and_threads():
-    main.THREADS.clear()
-    for i in range(6):
-        remember("t1", f"q{i}", f"a{i}", max_turns=4)
-    assert main.THREADS["t1"] == [("q2", "a2"), ("q3", "a3"), ("q4", "a4"), ("q5", "a5")]
-    remember("t2", "q", "a", max_threads=2)
-    remember("t3", "q", "a", max_threads=2)
-    assert list(main.THREADS) == ["t2", "t3"]  # oldest thread dropped
+def test_thread_history_pairs_questions_with_bot_answers():
+    msgs = [
+        {"ts": "1.0", "user": "U1", "text": "<@BOT> can users join after the start date?"},
+        {"ts": "2.0", "user": "BOT", "bot_id": "B1", "text": "Yes, until the challenge stops. Use `a &lt; b`."},
+        {"ts": "3.0", "user": "U2", "text": "lol nice"},
+        {"ts": "4.0", "user": "U1", "text": "are you sure?"},
+    ]
+    history, bot_last = main.thread_history(msgs, "BOT", current_ts="4.0")
+    assert history == [("can users join after the start date?", "Yes, until the challenge stops. Use `a < b`.")]
+    assert bot_last is False  # U2 spoke after the bot, so "are you sure?" needs an @mention
+
+    history, bot_last = main.thread_history(msgs[:2] + [msgs[3]], "BOT", current_ts="4.0")
+    assert bot_last is True  # direct follow-up to the bot: answer without @mention
+    assert main.thread_history([msgs[0]], "BOT", current_ts="1.0") == ([], False)  # thread starter itself
