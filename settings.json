@@ -1,0 +1,5 @@
+{
+  "allowed_folders": ["./knowledge"],
+  "allowed_files": [],
+  "allowed_extensions": [".md", ".txt"]
+}

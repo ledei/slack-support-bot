@@ -1,0 +1,8 @@
+.venv/
+chroma/
+.env
+__pycache__/
+knowledge/
+docs/
+tests/
+.git/

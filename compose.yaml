@@ -1,0 +1,28 @@
+services:
+  bot:
+    build: .
+    ports:
+      - "127.0.0.1:8000:8000"
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      CHROMA_PATH: /tmp/chroma
+      # Default: Ollama running on the host (uses the Mac's GPU). With --profile ollama, set DOCKER_OLLAMA_URL=http://ollama:11434.
+      # Its own name, because Compose also reads .env, where OLLAMA_URL=localhost means the container itself.
+      OLLAMA_URL: ${DOCKER_OLLAMA_URL:-http://host.docker.internal:11434}
+    volumes:
+      # Read-only: the bot can see the allowlist and docs but never change them.
+      # Mount every folder and file settings.json lists, at the same path under /app.
+      - ./settings.json:/app/settings.json:ro
+      - ./knowledge:/app/knowledge:ro
+
+  # For a server without Ollama installed. CPU-only on a Mac, so slower there.
+  ollama:
+    image: ollama/ollama:0.12.6
+    profiles: [ollama]
+    volumes:
+      - ollama:/root/.ollama
+
+volumes:
+  ollama:
