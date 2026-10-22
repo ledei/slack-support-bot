@@ -20,7 +20,10 @@ snapshot = Path(".knowledge-snapshot.json")
 old = json.loads(snapshot.read_text()) if snapshot.exists() else {}
 now = {str(p): p.stat().st_mtime_ns for p in jev.allowed_files()}
 cwd = str(Path.cwd()) + "/"
-short = lambda paths: ", ".join(sorted(p.removeprefix(cwd) for p in paths)) or "none"
+def short(paths):
+    names = sorted(p.removeprefix(cwd) for p in paths)
+    more = f" … and {len(names) - 10} more" if len(names) > 10 else ""
+    return ", ".join(names[:10]) + more or "none"
 
 print(f"Knowledge: {len(now)} files")
 print(f"  new:     {short(now.keys() - old.keys())}")
@@ -32,12 +35,22 @@ EOF
 # --force-recreate: the index is rebuilt on every start, so this always picks up the docs.
 docker compose up -d --build --force-recreate bot >/dev/null 2>&1
 
-for _ in $(seq 1 90); do
+# Indexing runs before the server starts: ~2 minutes for ~400 files. Wait while the container is alive.
+echo -n "Indexing and starting"
+container=$(docker compose ps -q bot)
+for _ in $(seq 1 600); do
   health=$(curl -sf -m 2 http://localhost:8000/health) && break
+  if [ "$(docker inspect -f '{{.State.Running}}' "$container" 2>/dev/null)" != "true" ]; then
+    echo; echo "The bot stopped while starting. Last log lines:"
+    docker compose logs --tail 20 bot
+    exit 1
+  fi
   sleep 1
+  echo -n "."
 done
+echo
 if [ -z "${health:-}" ]; then
-  echo "The bot didn't start. Last log lines:"
+  echo "The bot is still starting after 10 minutes. Last log lines:"
   docker compose logs --tail 20 bot
   exit 1
 fi
