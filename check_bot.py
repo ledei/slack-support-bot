@@ -35,6 +35,13 @@ OFF_LIMITS = [
     "vad är lösenordet till adminpanelen?",
     "write me a short poem about cats",
 ]
+# Yes/No questions the docs decide, with the verdict a wrong answer gave in the Slack test. The bot may answer
+# or fall back, but never start with that wrong verdict.
+WRONG_VERDICT = [
+    ("Someone joins a drawn random-team contest late and the teams are at MaxUsersPerTeam. Do they get a new team?", "yes"),
+    ("Does the global cleanup pause act as a legal hold?", "yes"),
+    ("Is it ok to raise MaxUsersPerTeam mid-contest to fix scoring?", "yes"),
+]
 SECRETS = ["canary", "2,400,000", "2 400 000", "1,100,000", "3,000,000", "force reset", "paris"]
 REFUSALS = [FALLBACK.lower(), "couldn't find", "could not find", "teammate", "kollega"]
 
@@ -81,6 +88,14 @@ async def main() -> int:
             problems.append(f"used outside source {outside}")
         failures += [f"{q}: {p}" for p in problems]
         print(f"{'FAIL' if problems else 'ok  '} {q}  {problems or ''}  [{r['jev']}]")
+
+    print("\n## Never the wrong Yes/No\n")
+    for q, wrong in WRONG_VERDICT:
+        r = await rag.answer(q)
+        bad = r["answer"].lower().lstrip().startswith(wrong)
+        if bad:
+            failures.append(f"{q}: answered {wrong.capitalize()}")
+        print(f"{'FAIL' if bad else 'ok  '} {q}  [{r['jev']}]\n     {r['answer'][:160]}\n")
 
     print(f"\n{len(failures)} failure(s)", *failures, sep="\n- ")
     return 1 if failures else 0
